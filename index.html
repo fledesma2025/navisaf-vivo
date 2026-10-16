@@ -300,12 +300,13 @@ details.adv .field{margin-top:10px}
           <div class="row"><span class="icon">schedule</span><span>Última señal</span><b id="dAgo">—</b></div>
           <div class="row"><span class="icon">pentagon</span><span>Curva</span><b id="dZone">—</b></div>
           <div class="row"><span class="icon">explore</span><span>Rumbo</span><b id="dHeading">—</b></div>
+          <div class="row"><span class="icon">satellite_alt</span><span>Ubicación</span><b id="dSrc">—</b></div>
         </div>
         <div class="alertbox" id="alertBox">
           <div class="ab-head"><span class="icon">volume_up</span>
             <div><b>Alertas de curva</b><small id="abInfo">Avisa con voz al entrar a una geocerca de inicio de curva.</small></div></div>
           <div class="seg" id="srcSeg">
-            <button data-src="phone">Voy en el vehículo</button><button data-src="vehicle" class="on">Monitoreo remoto</button>
+            <button data-src="phone">Voy en el vehículo · GPS celular</button><button data-src="vehicle" class="on">Remoto · MyGeotab</button>
           </div>
           <div class="ab-actions">
             <button class="btn primary sm" id="alertBtn"><span class="icon">notifications_active</span><span id="alertTxt">Activar alertas de voz</span></button>
@@ -547,7 +548,7 @@ function DemoSource(single){
    3. ESTADO Y MAPA
    ===================================================== */
 const S={src:null,devices:new Map(),status:new Map(),zones:[],selected:null,trail:[],trailMin:60,
-  follow:true,showZones:true,sat:false,timer:null,selToken:0,lastOk:0,liveOk:true,tab:'veh',filter:'all',q:'',single:false};
+  follow:true,showZones:true,sat:false,timer:null,selToken:0,lastOk:0,liveOk:true,tab:'veh',filter:'all',q:'',single:false,phoneTrail:[]};
 const COL={mov:'#26B5E6',stop:'#0F447E',off:'#8A93A8'};
 const LBL={mov:'En movimiento',stop:'Detenido',off:'Sin comunicación'};
 const cls=s=>(!s||!s.online)?'off':(s.speed>3?'mov':'stop');
@@ -557,13 +558,20 @@ const dark=matchMedia('(prefers-color-scheme: dark)').matches;
 
 function initMap(){
   if(map)return;
-  map=L.map('map',{zoomControl:false}).setView([4.65,-74.1],11);
+  map=L.map('map',{zoomControl:false,maxZoom:19}).setView([4.65,-74.1],11);
   map.attributionControl.setPrefix(false);
   map.attributionControl.setPosition('topleft');
-  tiles.street=L.tileLayer(dark
-      ?'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-      :'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    {maxZoom:20,subdomains:'abcd',attribution:'© OpenStreetMap · © CARTO'});
+  // Mapas base sin llave: OpenStreetMap (claro) y Esri Dark Gray (oscuro, con nombres de calles)
+  const osm=()=>L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'});
+  if(dark){
+    const E='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/';
+    const base=L.tileLayer(E+'World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,maxNativeZoom:16,attribution:'© Esri · © OpenStreetMap'});
+    const labels=L.tileLayer(E+'World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,maxNativeZoom:16});
+    // Si el mapa oscuro falla varias veces, se cambia solo al mapa claro
+    let fails=0;base.on('tileerror',()=>{if(++fails===6&&tiles.street===darkGroup){const was=map.hasLayer(darkGroup);if(was)map.removeLayer(darkGroup);tiles.street=osm();if(was)tiles.street.addTo(map);}});
+    const darkGroup=L.layerGroup([base,labels]);
+    tiles.street=darkGroup;
+  }else tiles.street=osm();
   tiles.sat=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     {maxZoom:19,attribution:'Imágenes © Esri'});
   tiles.street.addTo(map);
@@ -623,8 +631,22 @@ function animateTo(m,to,animate){
   };
   m._raf=requestAnimationFrame(stepF);
 }
+const phoneFresh=()=>Alert.src==='phone'&&Alert.phone&&Date.now()-Alert.phone.t<10000;
+function curPos(){
+  if(phoneFresh())return Object.assign({},Alert.phone,{online:true,src:'phone'});
+  const s=S.status.get(S.selected);return s?Object.assign({},s,{src:'geotab'}):null;
+}
+let ghost=null; // punto gris: dónde lo reporta MyGeotab (para comparar el retraso)
+function updateGhost(){
+  const s=S.status.get(S.selected);
+  if(phoneFresh()&&s){
+    if(!ghost)ghost=L.circleMarker([s.lat,s.lng],{radius:6,weight:2,color:'#fff',fillColor:'#8A93A8',fillOpacity:.85,interactive:false}).addTo(map);
+    else ghost.setLatLng([s.lat,s.lng]);
+  }else if(ghost){map.removeLayer(ghost);ghost=null;}
+}
 function updateSelMarker(animate){
-  const s=S.status.get(S.selected);if(!s)return;
+  const s=curPos();if(!s)return;
+  updateGhost();
   if(!selMarker){
     selMarker=L.marker([s.lat,s.lng],{zIndexOffset:1000,icon:L.divIcon({className:'',iconSize:[48,48],iconAnchor:[24,24],
       html:'<div class="vm"><i class="pulse"></i><span class="icon arrow">navigation</span></div>'})}).addTo(map);
@@ -635,10 +657,15 @@ function updateSelMarker(animate){
   animateTo(selMarker,[s.lat,s.lng],animate);
   if(S.follow)map.panTo([s.lat,s.lng],{animate:true,duration:.9});
 }
+function trailPts(){
+  let arr=S.trail;
+  if(Alert.src==='phone'&&S.phoneTrail.length){const t0=S.phoneTrail[0].t;arr=S.trail.filter(p=>p.t<t0).concat(S.phoneTrail);}
+  const s=curPos();
+  if(s&&arr.length&&s.t>=arr[arr.length-1].t)arr=arr.concat([{lat:s.lat,lng:s.lng,t:s.t}]);
+  return arr;
+}
 function renderTrail(){
-  const pts=S.trail.map(p=>[p.lat,p.lng]);
-  const s=S.status.get(S.selected);
-  if(s&&pts.length&&s.t>=S.trail[S.trail.length-1].t)pts.push([s.lat,s.lng]);
+  const pts=trailPts().map(p=>[p.lat,p.lng]);
   if(!trailLine){
     trailCasing=L.polyline(pts,{pane:'trail',color:'#0F447E',weight:8,opacity:.5,lineJoin:'round',lineCap:'round',interactive:false}).addTo(map);
     trailLine=L.polyline(pts,{pane:'trail',color:'#26B5E6',weight:4,opacity:1,lineJoin:'round',lineCap:'round',interactive:false}).addTo(map);
@@ -646,6 +673,7 @@ function renderTrail(){
 }
 function clearSelectionLayers(){
   if(selMarker){cancelAnimationFrame(selMarker._raf);map.removeLayer(selMarker);selMarker=null;}
+  if(ghost){map.removeLayer(ghost);ghost=null;}
   if(trailLine){map.removeLayer(trailLine);map.removeLayer(trailCasing);trailLine=trailCasing=null;}
 }
 
@@ -660,7 +688,7 @@ function ago(t){
 const compass=b=>['Norte','Noreste','Este','Sureste','Sur','Suroeste','Oeste','Noroeste'][Math.round(((b%360)+360)%360/45)%8];
 function hav(a,b){const R=6371,r=Math.PI/180,dLat=(b.lat-a.lat)*r,dLng=(b.lng-a.lng)*r;
   const x=Math.sin(dLat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLng/2)**2;return 2*R*Math.asin(Math.sqrt(x));}
-const trailKm=()=>{let k=0;for(let i=1;i<S.trail.length;i++)k+=hav(S.trail[i-1],S.trail[i]);return k;};
+const trailKm=()=>{const a=trailPts();let k=0;for(let i=1;i<a.length;i++)k+=hav(a[i-1],a[i]);return k;};
 const fmtKm=k=>k.toLocaleString('es-CO',{minimumFractionDigits:1,maximumFractionDigits:1});
 
 /* =====================================================
@@ -696,7 +724,7 @@ function renderList(){
   }
 }
 function renderDetail(){
-  const id=S.selected,d=S.devices.get(id),s=S.status.get(id);if(!d)return;
+  const id=S.selected,d=S.devices.get(id),s=curPos();if(!d)return;
   $('#dName').textContent=d.name;$('#dPlate').textContent=d.plate||'Sin placa';
   const c=cls(s),p=$('#dStatus');p.className='pill '+c;p.textContent=LBL[c];
   $('#dSpeed').textContent=s?Math.round(c==='off'?0:s.speed):'—';
@@ -704,6 +732,10 @@ function renderDetail(){
   $('#dZone').textContent=s?(curvesAtText(s.lat,s.lng)||'Fuera de curvas'):'—';
   $('#dHeading').textContent=s&&c==='mov'?compass(s.bearing):'—';
   $('#dAgo').textContent=s?ago(s.t):'—';
+  const g=S.status.get(id);
+  $('#dSrc').textContent=!s?'—':s.src==='phone'
+    ?'GPS del teléfono ±'+Math.round(s.acc)+' m'+(g?' · MyGeotab va '+Math.max(0,Math.round((Date.now()-g.t)/1000))+' s atrás':'')
+    :'MyGeotab (cada '+Math.round(S.src.interval/1000)+' s)';
 }
 function renderFollow(){
   $('#followTxt').textContent=S.follow?'Siguiendo':'Seguir vehículo';
@@ -758,7 +790,7 @@ async function loadTrail(){
 function select(id){
   if(!S.devices.has(id))return;
   clearSelectionLayers();
-  S.selected=id;S.trail=[];S.follow=true;
+  S.selected=id;S.trail=[];S.phoneTrail=[];S.follow=true;
   renderVehicles();updateSelMarker(false);renderTrail();
   const s=S.status.get(id);if(s)map.setView([s.lat,s.lng],Math.max(map.getZoom(),15));
   showPane(true);renderDetail();renderFollow();
@@ -773,7 +805,7 @@ function tickLive(){
   const live=$('#live');
   live.classList.toggle('bad',!S.liveOk);
   $('#liveTxt').textContent=!S.liveOk?'Reconectando…':(S.lastOk?'En vivo · '+ago(S.lastOk):'Conectando…');
-  if(S.selected){const s=S.status.get(S.selected);if(s)$('#dAgo').textContent=ago(s.t);}
+  if(S.selected){const s=curPos();if(s)$('#dAgo').textContent=ago(s.t);}
 }
 setInterval(tickLive,1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&S.src)loop();});
@@ -781,7 +813,7 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&S.src)loo
 /* =====================================================
    6b. ALERTAS DE VOZ EN CURVAS
    ===================================================== */
-const Alert={on:false,src:'vehicle',inside:new Set(),last:{},watchId:null,wake:null,ctx:null,phoneMarker:null,voice:null};
+const Alert={on:false,src:'vehicle',inside:new Set(),last:{},watchId:null,wake:null,ctx:null,phone:null,voice:null};
 function pickVoice(){
   try{const vs=speechSynthesis.getVoices();Alert.voice=vs.find(v=>/^es[-_](CO|MX|US|419)/i.test(v.lang))||vs.find(v=>/^es/i.test(v.lang))||null;}catch(e){}
 }
@@ -818,21 +850,36 @@ async function keepAwake(){
   try{if(Alert.on&&'wakeLock' in navigator&&!document.hidden)Alert.wake=await navigator.wakeLock.request('screen');}catch(e){}
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)keepAwake();});
+function bearingTo(a,b){const r=Math.PI/180,y=Math.sin((b.lng-a.lng)*r)*Math.cos(b.lat*r),x=Math.cos(a.lat*r)*Math.sin(b.lat*r)-Math.sin(a.lat*r)*Math.cos(b.lat*r)*Math.cos((b.lng-a.lng)*r);return (Math.atan2(y,x)/r+360)%360;}
 function startPhoneGps(){
   if(!('geolocation' in navigator)){toast('Este teléfono no permite usar el GPS desde el navegador.');return false;}
+  if(Alert.watchId!=null)return true;
   Alert.watchId=navigator.geolocation.watchPosition(p=>{
     const c=p.coords;if(c.accuracy>80)return; // ignora lecturas imprecisas
-    if(!Alert.phoneMarker)Alert.phoneMarker=L.circleMarker([c.latitude,c.longitude],{radius:7,weight:3,color:'#fff',fillColor:'#1E8E5A',fillOpacity:1,interactive:false}).addTo(map);
-    else Alert.phoneMarker.setLatLng([c.latitude,c.longitude]);
-    $('#abInfo').textContent='Activas con el GPS de este teléfono (precisión ±'+Math.round(c.accuracy)+' m).';
-    checkCurves(c.latitude,c.longitude,c.speed!=null&&c.speed>=0?c.speed*3.6:0);
+    const prev=Alert.phone,cur={lat:c.latitude,lng:c.longitude},now=Date.now();
+    const moved=prev?hav(prev,cur)*1000:0;
+    let hd=(c.heading!=null&&!isNaN(c.heading))?c.heading:null;
+    if(hd==null)hd=prev?(moved>4?bearingTo(prev,cur):prev.bearing):0;
+    const spd=(c.speed!=null&&c.speed>=0)?c.speed*3.6:(prev&&moved>0?moved/((now-prev.t)/1000)*3.6:0);
+    Alert.phone={lat:cur.lat,lng:cur.lng,speed:spd,bearing:hd,t:now,acc:c.accuracy};
+    if(!prev||moved>3)S.phoneTrail.push({lat:cur.lat,lng:cur.lng,t:now});
+    const cut=now-S.trailMin*60000;while(S.phoneTrail.length&&S.phoneTrail[0].t<cut)S.phoneTrail.shift();
+    if(S.selected){updateSelMarker(true);renderTrail();renderDetail();}
+    if(Alert.on){$('#abInfo').textContent='Activas con el GPS de este teléfono (precisión ±'+Math.round(c.accuracy)+' m).';checkCurves(cur.lat,cur.lng,spd);}
   },err=>{toast(err.code===1?'Debes permitir el acceso a la ubicación para usar el GPS del teléfono.':'No se pudo leer el GPS del teléfono.');},
-  {enableHighAccuracy:true,maximumAge:1000,timeout:20000});
+  {enableHighAccuracy:true,maximumAge:0,timeout:20000});
   return true;
 }
 function stopPhoneGps(){
   if(Alert.watchId!=null){navigator.geolocation.clearWatch(Alert.watchId);Alert.watchId=null;}
-  if(Alert.phoneMarker){map.removeLayer(Alert.phoneMarker);Alert.phoneMarker=null;}
+  Alert.phone=null;S.phoneTrail=[];
+}
+// Aplica la fuente de ubicación elegida: teléfono o MyGeotab
+function applySource(){
+  stopPhoneGps();
+  if(Alert.src==='phone'&&!startPhoneGps())Alert.src='vehicle';
+  renderAlertUi();
+  if(S.selected){updateSelMarker(false);renderTrail();renderDetail();}
 }
 function renderAlertUi(){
   const n=S.zones.filter(z=>z.isCurve).length;
@@ -844,15 +891,13 @@ function renderAlertUi(){
   else if(!Alert.on){const c20=S.zones.filter(z=>z.limit===20).length,c30=S.zones.filter(z=>z.limit===30).length;
     $('#abInfo').textContent=n+' curvas cargadas ('+c20+' de 20 km/h y '+c30+' de 30 km/h). Avisa con voz al entrar en una.';}
   else if(Alert.src==='vehicle')$('#abInfo').textContent='Activas con el GPS del vehículo (MyGeotab). Puede haber algunos segundos de retraso.';
-  else if(!Alert.phoneMarker)$('#abInfo').textContent='Buscando señal GPS del teléfono…';
+  else if(!Alert.phone)$('#abInfo').textContent='Buscando señal GPS del teléfono…';
 }
 function setAlerts(on){
   Alert.on=on;Alert.inside=new Set();
-  stopPhoneGps();
   if(on){
     beep();speak('Alertas de curva activadas'); // desbloquea el audio en el teléfono
     keepAwake();
-    if(Alert.src==='phone'&&!startPhoneGps()){Alert.src='vehicle';}
   }else{try{Alert.wake&&Alert.wake.release();}catch(e){}Alert.wake=null;}
   renderAlertUi();
 }
@@ -893,7 +938,7 @@ async function startApp(src,label){
     loading(true,'Cargando curvas…');
     try{S.zones=await src.zones();}catch(e){S.zones=[];toast(friendly(e));}
     drawZones();
-    Alert.src=(S.single&&!src.demo)?'phone':'vehicle';renderAlertUi();
+    Alert.src=(S.single&&!src.demo)?'phone':'vehicle';applySource();
     $('#srcSeg').hidden=!!src.demo;
     loading(true,'Ubicando la flota…');
     applyPoll(await src.poll(null,null),false);
@@ -914,6 +959,7 @@ function noVehicles(){
 }
 function logout(){
   if(Alert.on)setAlerts(false);
+  Alert.src='vehicle';stopPhoneGps();
   clearTimeout(S.timer);S.src=null;S.selToken++;
   if(map){clearSelectionLayers();for(const m of Object.values(vehLayer))map.removeLayer(m);zoneGroup.clearLayers();}
   vehLayer={};$('#backBtn').hidden=false;Object.assign(S,{single:false,devices:new Map(),status:new Map(),zones:[],selected:null,trail:[],lastOk:0,liveOk:true,q:'',filter:'all'});
@@ -971,8 +1017,8 @@ $('#alertBtn').addEventListener('click',()=>setAlerts(!Alert.on));
 $('#testBtn').addEventListener('click',()=>fireCurve({name:'Prueba de sonido',limit:20,hazards:'neblina, abismos'},35));
 $('#srcSeg').addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
-  Alert.src=b.dataset.src;
-  if(Alert.on)setAlerts(true);else renderAlertUi();
+  Alert.src=b.dataset.src;Alert.inside=new Set();
+  applySource();
 });
 $('#followBtn').addEventListener('click',()=>{
   S.follow=!S.follow;renderFollow();
