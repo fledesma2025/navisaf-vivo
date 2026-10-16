@@ -1,0 +1,35 @@
+NAVISAF · RASTREO EN VIVO — Prototipo de app Android
+=====================================================
+
+QUÉ CONTIENE
+  index.html            La app completa
+  manifest.webmanifest  Nombre, ícono y colores para instalarla en Android
+  sw.js                 Permite instalarla y que abra rápido
+  icons/                Íconos de la app
+
+PUBLICARLA (una sola vez, gratis, con GitHub Pages)
+  1. En GitHub crea un repositorio nuevo, por ejemplo "navisaf-vivo".
+  2. Sube TODOS los archivos de esta carpeta (incluida la carpeta icons).
+  3. Ve a Settings > Pages > Source: "Deploy from a branch", rama "main", carpeta "/ (root)". Guarda.
+  4. En 1-2 minutos queda en: https://TU-USUARIO.github.io/navisaf-vivo/
+
+INSTALARLA EN EL CELULAR DEL CONDUCTOR
+  1. Abrir esa dirección en Chrome (Android).
+  2. Menú (⋮) > "Instalar app" o "Agregar a pantalla principal".
+  3. Queda el ícono de Navisaf; abre en pantalla completa como cualquier app.
+
+USO
+  - Entrar con base de datos, usuario y contraseña de MyGeotab.
+  - Si el usuario solo tiene acceso a 1 vehículo, abre directo en ese vehículo.
+  - Tocar "Activar alertas de voz" y elegir "Voy en el vehículo" (GPS del teléfono).
+  - La app debe quedar abierta y en pantalla durante el recorrido.
+
+CONFIGURACIÓN (al inicio del código en index.html)
+  CURVE_ZONE_TYPE      Texto con que empiezan las tipologías de curva ("Inicio de curva")
+  CURVE_DEFAULT_LIMIT  Límite si la tipología no trae número (30)
+  LIMIT_COLORS         Color en el mapa por velocidad (20 rojo, 30 amarillo)
+
+USUARIOS DE RUTA (en MyGeotab)
+  - Un grupo por ruta con el vehículo asignado.
+  - Usuario con acceso de datos solo a ese grupo, permiso de solo lectura.
+  - Las geocercas de curva deben estar en un grupo visible para ese usuario.
