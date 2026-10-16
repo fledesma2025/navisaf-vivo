@@ -1,7 +1,7 @@
 // Navisaf Rastreo en vivo · service worker
 // Guarda la app (pantallas, íconos, librería de mapas) para que abra rápido.
 // Los datos de MyGeotab y los mapas NUNCA se guardan: siempre se piden en vivo.
-const CACHE='navisaf-vivo-v3';
+const CACHE='navisaf-curvas-v4';
 const SHELL=['./','index.html','manifest.webmanifest','icons/icon-192.png','icons/icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'];
